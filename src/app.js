@@ -1,5 +1,7 @@
 import express from "express";
 
+import cors from "cors";
+
 import userRouter from "./routes/user.route.js";
 
 const app = express();
@@ -15,10 +17,6 @@ app.use(
     credentials: true,
   })
 );
-
-app.options("*", cors());
-
-app.use(cors(corsOptions));
 
 app.use(express.json());
 
