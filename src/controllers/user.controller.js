@@ -24,7 +24,7 @@ const registerUser = async (req, res) => {
       username,
       password,
       email: email.toLowerCase(),
-      loggedIn: false,
+      loggedIn: true,
     });
 
     return res.status(201).json({
@@ -65,6 +65,10 @@ const logginUser = async (req, res) => {
       return res.status(400).json({ message: "Invalid credentials." });
     }
 
+    user.loggedIn = true;
+
+    await user.save();
+
     return res.status(200).json({
       message: "User logged in successfully.",
       user: {
@@ -89,6 +93,9 @@ const logoutUser = async (req, res) => {
     if (!user) {
       return res.status(400).json({ message: "User not found." });
     }
+
+    user.loggedIn = false;
+    await user.save();
 
     return res.status(200).json({ message: "User logged out successfully." });
   } catch (error) {

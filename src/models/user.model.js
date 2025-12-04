@@ -25,6 +25,10 @@ const userSchema = new Schema(
       minLength: 6,
       maxLength: 50,
     },
+    loggedIn: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );
