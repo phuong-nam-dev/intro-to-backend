@@ -1,6 +1,14 @@
 import bcrypt from "bcrypt";
 
+import jwt from "jsonwebtoken";
+
 import User from "../models/user.model.js";
+
+const generateToken = (userId) => {
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+    expiresIn: "7d",
+  });
+};
 
 const registerUser = async (req, res) => {
   try {
@@ -27,6 +35,8 @@ const registerUser = async (req, res) => {
       loggedIn: true,
     });
 
+    const token = generateToken(user._id);
+
     return res.status(201).json({
       message: "User registered successfully.",
       user: {
@@ -34,6 +44,7 @@ const registerUser = async (req, res) => {
         username: user.username,
         email: user.email,
       },
+      token,
     });
   } catch (error) {
     res
@@ -52,8 +63,7 @@ const logginUser = async (req, res) => {
         .json({ message: "Email and password are required." });
     }
 
-    const normalizedEmail = String(email).toLowerCase().trim();
-
+    const normalizedEmail = email.toLowerCase().trim();
     const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
@@ -66,8 +76,9 @@ const logginUser = async (req, res) => {
     }
 
     user.loggedIn = true;
-
     await user.save();
+
+    const token = generateToken(user._id);
 
     return res.status(200).json({
       message: "User logged in successfully.",
@@ -76,9 +87,10 @@ const logginUser = async (req, res) => {
         username: user.username,
         email: user.email,
       },
+      token,
     });
   } catch (error) {
-    res
+    return res
       .status(500)
       .json({ message: "Internal server error.", error: error.message });
   }
@@ -105,4 +117,31 @@ const logoutUser = async (req, res) => {
   }
 };
 
-export { registerUser, logginUser, logoutUser };
+export const protect = async (req, res, next) => {
+  let token;
+
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith("Bearer")
+  ) {
+    try {
+      token = req.headers.authorization.split(" ")[1];
+
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      req.user = await User.findById(decoded.id).select("-password");
+
+      return next();
+    } catch (err) {
+      return res.status(401).json({ message: "Invalid token" });
+    }
+  }
+
+  return res.status(401).json({ message: "Not authorized, no token" });
+};
+
+const getCurrentUser = (req, res) => {
+  return res.status(200).json({ user: req.user });
+};
+
+export { registerUser, logginUser, logoutUser, protect };
