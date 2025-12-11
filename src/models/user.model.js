@@ -23,7 +23,7 @@ const userSchema = new Schema(
       type: String,
       required: true,
       minLength: 6,
-      maxLength: 50,
+      maxLength: 120,
     },
     loggedIn: {
       type: Boolean,

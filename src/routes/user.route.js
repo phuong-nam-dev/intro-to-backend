@@ -1,8 +1,9 @@
 import { Router } from "express";
 import {
+  authMiddleware,
+  getCurrentUser,
   logginUser,
   logoutUser,
-  protect,
   registerUser,
 } from "../controllers/user.controller.js";
 
@@ -14,6 +15,6 @@ router.route("/login").post(logginUser);
 
 router.route("/logout").post(logoutUser);
 
-router.get("/current", protect);
+router.get("/me", authMiddleware, getCurrentUser);
 
 export default router;
