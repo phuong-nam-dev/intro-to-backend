@@ -99,30 +99,28 @@ const logginUser = async (req, res) => {
 
 const logoutUser = async (req, res) => {
   try {
-    const { email } = req.body;
+    const refreshToken = req.cookies?.refreshToken;
 
-    const user = await User.findOne({ email });
+    if (refreshToken) {
+      const user = await User.findOne({ refreshToken });
 
-    if (!user) {
-      return res.status(400).json({ message: "User not found." });
-    }
-
-    const token = req.cookies?.refreshToken;
-
-    if (token) {
-      const user = await User.findOne({ refreshToken: token });
-      user.refreshToken = null;
-      user.tokenVersion += 1;
-      await user.save();
+      if (user) {
+        user.refreshToken = null;
+        user.tokenVersion += 1;
+        await user.save();
+      }
     }
 
     res.clearCookie("refreshToken", refreshCookieOptions);
 
-    return res.status(200).json({ message: "User logged out successfully." });
+    return res.status(200).json({
+      message: "User logged out successfully.",
+    });
   } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Internal server error.", error: error.message });
+    console.error("Logout error:", error);
+    return res.status(500).json({
+      message: "Internal server error.",
+    });
   }
 };
 
