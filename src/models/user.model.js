@@ -25,9 +25,13 @@ const userSchema = new Schema(
       minLength: 6,
       maxLength: 120,
     },
-    loggedIn: {
-      type: Boolean,
-      default: false,
+    tokenVersion: {
+      type: Number,
+      default: 0,
+    },
+    refreshToken: {
+      type: String,
+      default: null,
     },
   },
   { timestamps: true }

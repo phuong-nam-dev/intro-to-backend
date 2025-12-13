@@ -3,14 +3,8 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 
 import User from "../models/user.model.js";
-
-const getJwtSecret = () => (process.env.JWT_SECRET || "").trim();
-
-const generateToken = (userId) => {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: "7d",
-  });
-};
+import { signAccessToken, signRefreshToken } from "../utils/jwt.js";
+import { refreshCookieOptions } from "../utils/cookie.js";
 
 const registerUser = async (req, res) => {
   try {
@@ -34,26 +28,21 @@ const registerUser = async (req, res) => {
       username,
       password,
       email: email.toLowerCase(),
-      loggedIn: true,
+      tokenVersion: 0,
     });
 
-    const token = generateToken(user._id);
+    const accessToken = signAccessToken(user);
+    const refreshToken = signRefreshToken(user);
 
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    res.cookie("refreshToken", refreshToken, refreshCookieOptions);
 
     return res.status(201).json({
       message: "User registered successfully.",
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-      },
+      user: { id: user._id, username, email: user.email },
+      accessToken,
     });
   } catch (error) {
     res
@@ -84,18 +73,13 @@ const logginUser = async (req, res) => {
       return res.status(400).json({ message: "Invalid credentials." });
     }
 
-    user.loggedIn = true;
+    const accessToken = signAccessToken(user);
+    const refreshToken = signRefreshToken(user);
+
+    user.refreshToken = refreshToken;
     await user.save();
 
-    const token = generateToken(user._id);
-
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    res.cookie("refreshToken", refreshToken, refreshCookieOptions);
 
     return res.status(200).json({
       message: "User logged in successfully.",
@@ -104,7 +88,7 @@ const logginUser = async (req, res) => {
         username: user.username,
         email: user.email,
       },
-      token,
+      accessToken,
     });
   } catch (error) {
     return res
@@ -123,66 +107,22 @@ const logoutUser = async (req, res) => {
       return res.status(400).json({ message: "User not found." });
     }
 
-    user.loggedIn = false;
-    await user.save();
+    const token = req.cookies?.refreshToken;
 
-    res.clearCookie("token", {
-      httpOnly: true,
-      sameSite: "none",
-      secure: true,
-      path: "/",
-    });
+    if (token) {
+      const user = await User.findOne({ refreshToken: token });
+      user.refreshToken = null;
+      user.tokenVersion += 1;
+      await user.save();
+    }
+
+    res.clearCookie("refreshToken", refreshCookieOptions);
 
     return res.status(200).json({ message: "User logged out successfully." });
   } catch (error) {
     res
       .status(500)
       .json({ message: "Internal server error.", error: error.message });
-  }
-};
-
-const authMiddleware = async (req, res, next) => {
-  try {
-    // ưu tiên header Authorization, fallback cookie 'token'
-    const authHeader = req.headers.authorization || req.headers.Authorization;
-    const tokenFromHeader =
-      authHeader && authHeader.startsWith("Bearer ")
-        ? authHeader.split(" ")[1]
-        : null;
-
-    const tokenFromCookie = req.cookies?.token || null;
-
-    const token = tokenFromHeader || tokenFromCookie;
-
-    if (!token) {
-      return res.status(401).json({ message: "No token provided." });
-    }
-
-    let decoded;
-    try {
-      const secret = getJwtSecret();
-      if (!secret) {
-        console.error("JWT secret is missing in environment");
-        return res
-          .status(500)
-          .json({ message: "Server JWT misconfiguration." });
-      }
-      decoded = jwt.verify(token, secret);
-    } catch (err) {
-      console.error("JWT verify error:", err.name, err.message);
-      return res.status(401).json({ message: "Token is invalid or expired." });
-    }
-
-    const user = await User.findById(decoded.id).select("-password");
-    if (!user) {
-      return res.status(401).json({ message: "User not found." });
-    }
-
-    req.user = user;
-    next();
-  } catch (error) {
-    console.error("Auth middleware error:", error);
-    return res.status(500).json({ message: "Internal server error." });
   }
 };
 
@@ -196,7 +136,6 @@ const getCurrentUser = async (req, res) => {
         id: user._id,
         username: user.username,
         email: user.email,
-        loggedIn: user.loggedIn ?? undefined,
       },
     });
   } catch (error) {
@@ -207,4 +146,66 @@ const getCurrentUser = async (req, res) => {
   }
 };
 
-export { registerUser, logginUser, logoutUser, getCurrentUser, authMiddleware };
+const refreshToken = async (req, res) => {
+  const token = req.cookies?.refreshToken;
+  if (!token) return res.sendStatus(401);
+
+  let payload;
+  try {
+    payload = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+  } catch {
+    return res.sendStatus(401);
+  }
+
+  const user = await User.findById(payload.id);
+  if (!user || user.refreshToken !== token) {
+    user && (user.tokenVersion += 1);
+    user && (user.refreshToken = null);
+    user && (await user.save());
+    res.clearCookie("refreshToken", refreshCookieOptions);
+    return res.sendStatus(401);
+  }
+
+  const newAccess = signAccessToken(user);
+  const newRefresh = signRefreshToken(user);
+
+  user.refreshToken = newRefresh;
+  await user.save();
+
+  res.cookie("refreshToken", newRefresh, refreshCookieOptions);
+
+  return res.json({
+    message: "Token refreshed successfully.",
+    accessToken: newAccess,
+    user: { id: user._id, username: user.username, email: user.email },
+  });
+};
+
+const verifyAccessToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer "))
+    return res.status(401).json({ message: "No token" });
+
+  try {
+    const token = authHeader.split(" ")[1];
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+
+    const user = await User.findById(payload.id);
+    if (!user || user.tokenVersion !== payload.tokenVersion)
+      return res.sendStatus(401);
+
+    req.user = user;
+    next();
+  } catch {
+    return res.sendStatus(401);
+  }
+};
+
+export {
+  registerUser,
+  logginUser,
+  logoutUser,
+  getCurrentUser,
+  refreshToken,
+  verifyAccessToken,
+};

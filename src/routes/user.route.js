@@ -1,10 +1,11 @@
 import { Router } from "express";
 import {
-  authMiddleware,
   getCurrentUser,
   logginUser,
   logoutUser,
+  refreshToken,
   registerUser,
+  verifyAccessToken,
 } from "../controllers/user.controller.js";
 
 const router = Router();
@@ -15,6 +16,8 @@ router.route("/login").post(logginUser);
 
 router.route("/logout").post(logoutUser);
 
-router.get("/me", authMiddleware, getCurrentUser);
+router.post("/refresh-token", refreshToken);
+
+router.get("/me", verifyAccessToken, getCurrentUser);
 
 export default router;
